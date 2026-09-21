@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-tracing-demo"
+version = "0.1.0"
+description = "A LangGraph agent traced with the OpenTelemetry GenAI semantic conventions"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Siva Maruri" }]
+dependencies = [
+    "langgraph>=0.3",
+    "langchain-core>=0.3",
+    "opentelemetry-sdk>=1.37",
+    "opentelemetry-semantic-conventions>=0.58b0",
+    "telemetry-scrubber @ git+https://github.com/siva8537853-blip/telemetry-scrubber",
+]
+
+[project.optional-dependencies]
+otlp = ["opentelemetry-exporter-otlp-proto-http>=1.37"]
+azure = ["langchain-openai>=0.3", "azure-identity>=1.15"]
+dev = ["pytest>=7", "ruff>=0.4"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
