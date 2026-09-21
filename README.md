@@ -18,17 +18,21 @@ pip install -e ".[otlp]"
 python -m agent_tracing
 ```
 
-It runs offline against a scripted model and prints the answer and the trace it produced:
+It runs offline against a scripted model and prints the answer, the trace and the metrics it produced:
 
 ```
 Order 1042 was charged twice for $59.90. A refund for the duplicate charge (rf_77310) was issued on 2026-09-18 and is still processing, so it should reach the card within 3-5 business days.
 
-invoke_agent support-agent            10.2 ms  tokens in/out 781/87
-  chat gpt-4o-mini                       0.1 ms  tokens in/out 182/21  finish tool_calls
-  execute_tool lookup_order              0.5 ms
+invoke_agent support-agent            12.0 ms  tokens in/out 781/87
+  chat gpt-4o-mini                       0.0 ms  tokens in/out 182/21  finish tool_calls
+  execute_tool lookup_order              0.6 ms
   chat gpt-4o-mini                       0.0 ms  tokens in/out 268/19  finish tool_calls
-  execute_tool refund_status             0.4 ms
+  execute_tool refund_status             0.5 ms
   chat gpt-4o-mini                       0.0 ms  tokens in/out 331/47  finish stop
+
+gen_ai.client.operation.duration         count 3  sum 0.000622764 s
+gen_ai.client.token.usage input          count 3  sum 781 {token}
+gen_ai.client.token.usage output         count 3  sum 87 {token}
 ```
 
 Set `OTEL_EXPORTER_OTLP_ENDPOINT` to also send it to a Collector. For a real model:
@@ -52,6 +56,12 @@ Cognitive Services OpenAI User on the resource.
 
 Attribute names come from `opentelemetry-semantic-conventions` rather than being typed in, so
 a rename upstream shows up as an import error instead of silently wrong telemetry.
+
+It also records the two GenAI client metrics, `gen_ai.client.token.usage` (split by
+`gen_ai.token.type`) and `gen_ai.client.operation.duration`, with the bucket boundaries the
+conventions recommend. Spans answer "what happened in this run"; the metrics answer "what
+is this model costing per day" without anyone aggregating spans. Failed calls still record
+a duration, tagged with `error.type`, and no tokens.
 
 Failures set the span status, `error.type` and an exception event. A failing tool doesn't
 fail the run: the error goes back to the model as the tool result, and the span keeps the
@@ -91,11 +101,10 @@ input.
 
 `pytest` covers the span tree and parent links, the semconv attributes on each span type,
 content being off by default, scrubbing and tokenization when it's on, tool and model
-failures, and the Azure model wiring (constructed without a network call).
+failures, token and duration metrics (including the error path), and the Azure model
+wiring (constructed without a network call).
 
 ## Known gaps
 
-- No GenAI metrics yet (`gen_ai.client.token.usage`, `gen_ai.client.operation.duration`).
-  The token counts are on the spans, so ADX can aggregate them in the meantime.
 - Streaming responses aren't handled; the chat span covers a single non-streamed call.
 - The GenAI conventions are still marked experimental, so attribute names may move again.

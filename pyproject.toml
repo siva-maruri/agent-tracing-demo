@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-tracing-demo"
-version = "0.1.0"
+version = "0.2.0"
 description = "A LangGraph agent traced with the OpenTelemetry GenAI semantic conventions"
 readme = "README.md"
 requires-python = ">=3.10"
