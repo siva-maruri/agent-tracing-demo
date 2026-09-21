@@ -160,6 +160,12 @@ class ChatMetrics:
             description="Tokens used per model call",
             explicit_bucket_boundaries_advisory=_TOKEN_BUCKETS,
         )
+        self._first_chunk = meter.create_histogram(
+            M.GEN_AI_CLIENT_OPERATION_TIME_TO_FIRST_CHUNK,
+            unit="s",
+            description="Time until the first streamed chunk arrives",
+            explicit_bucket_boundaries_advisory=_DURATION_BUCKETS,
+        )
         self._duration = meter.create_histogram(
             M.GEN_AI_CLIENT_OPERATION_DURATION,
             unit="s",
@@ -176,6 +182,7 @@ class ChatMetrics:
         input_tokens: int = 0,
         output_tokens: int = 0,
         error_type: str | None = None,
+        first_chunk_seconds: float | None = None,
     ) -> None:
         attrs: dict[str, str] = {
             G.GEN_AI_OPERATION_NAME: G.GenAiOperationNameValues.CHAT.value,
@@ -187,6 +194,8 @@ class ChatMetrics:
         if error_type:
             attrs[ERROR_TYPE] = error_type
         self._duration.record(seconds, attrs)
+        if first_chunk_seconds is not None:
+            self._first_chunk.record(first_chunk_seconds, attrs)
         if error_type is None:
             for token_type, count in (("input", input_tokens), ("output", output_tokens)):
                 self._tokens.record(count, {**attrs, G.GEN_AI_TOKEN_TYPE: token_type})

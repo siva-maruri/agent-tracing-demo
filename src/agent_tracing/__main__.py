@@ -56,13 +56,14 @@ def print_metrics(reader: InMemoryMetricReader) -> None:
                 for point in metric.data.data_points:
                     kind = point.attributes.get("gen_ai.token.type", "")
                     label = f"{metric.name} {kind}".strip()
-                    print(f"{label:<40} count {point.count}  sum {point.sum:g} {metric.unit}")
+                    print(f"{label:<44} count {point.count}  sum {point.sum:g} {metric.unit}")
 
 
 def main() -> None:
     p = argparse.ArgumentParser(prog="agent_tracing")
     p.add_argument("question", nargs="?", default=QUESTION)
     p.add_argument("--azure-deployment", help="use Azure OpenAI instead of the scripted model")
+    p.add_argument("--stream", action="store_true", help="stream model responses")
     args = p.parse_args()
 
     memory = InMemorySpanExporter()
@@ -79,7 +80,8 @@ def main() -> None:
     meters = meter_provider(*readers)
 
     model = AzureOpenAIModel(args.azure_deployment, TOOLS) if args.azure_deployment else demo_script()
-    answer = build_agent(model, TOOLS, tracer_provider=provider, meter_provider=meters)(args.question)
+    agent = build_agent(model, TOOLS, tracer_provider=provider, meter_provider=meters, stream=args.stream)
+    answer = agent(args.question)
     provider.shutdown()
 
     print(answer, end="\n\n")

@@ -7,7 +7,7 @@ import time
 import uuid
 from collections.abc import Callable, Sequence
 
-from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.graph import END, START, MessagesState, StateGraph
 from opentelemetry import metrics, trace
 from opentelemetry.metrics import MeterProvider
@@ -28,6 +28,7 @@ def build_agent(
     name: str = "support-agent",
     tracer_provider: TracerProvider | None = None,
     meter_provider: MeterProvider | None = None,
+    stream: bool = False,
 ) -> Callable[..., str]:
     tracer = (tracer_provider or trace.get_tracer_provider()).get_tracer("agent_tracing")
     chat_metrics = genai.ChatMetrics(
@@ -36,12 +37,33 @@ def build_agent(
     by_name = {t.name: t for t in tools}
     usage = {"input": 0, "output": 0}
 
+    def complete(messages: list[BaseMessage]) -> tuple[AIMessage, float | None]:
+        if not stream:
+            return model.invoke(messages), None
+        started, first, merged = time.perf_counter(), None, None
+        for chunk in model.stream(messages):
+            if first is None:
+                first = time.perf_counter() - started
+            merged = chunk if merged is None else merged + chunk
+        if merged is None:
+            raise RuntimeError("model stream ended without a chunk")
+        # Chunks merge into an AIMessageChunk; downstream code (and the message history)
+        # wants a plain AIMessage.
+        reply = AIMessage(
+            content=merged.content,
+            tool_calls=merged.tool_calls,
+            usage_metadata=merged.usage_metadata,
+            response_metadata=merged.response_metadata,
+            id=merged.id,
+        )
+        return reply, first
+
     def call_model(state: MessagesState) -> dict:
         messages = [SystemMessage(SYSTEM_PROMPT), *state["messages"]]
         started = time.perf_counter()
         with genai.chat_span(tracer, model.model_name, model.provider_name, messages) as span:
             try:
-                reply = model.invoke(messages)
+                reply, first_chunk = complete(messages)
             except Exception as exc:
                 chat_metrics.record(
                     time.perf_counter() - started,
@@ -58,6 +80,7 @@ def build_agent(
             response_model=(reply.response_metadata or {}).get("model_name"),
             input_tokens=i,
             output_tokens=o,
+            first_chunk_seconds=first_chunk,
         )
         usage["input"] += i
         usage["output"] += o
