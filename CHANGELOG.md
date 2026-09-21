@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0
+
+- Streaming (`--stream`, `build_agent(..., stream=True)`): same spans and token counts as a
+  non-streamed run, plus `gen_ai.client.operation.time_to_first_chunk`. Azure OpenAI asks
+  for usage on the final chunk.
+
 ## 0.2.0
 
 - `gen_ai.client.token.usage` and `gen_ai.client.operation.duration` metrics with the

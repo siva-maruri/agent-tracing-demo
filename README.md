@@ -23,19 +23,21 @@ It runs offline against a scripted model and prints the answer, the trace and th
 ```
 Order 1042 was charged twice for $59.90. A refund for the duplicate charge (rf_77310) was issued on 2026-09-18 and is still processing, so it should reach the card within 3-5 business days.
 
-invoke_agent support-agent            12.0 ms  tokens in/out 781/87
+invoke_agent support-agent             8.6 ms  tokens in/out 781/87
   chat gpt-4o-mini                       0.0 ms  tokens in/out 182/21  finish tool_calls
-  execute_tool lookup_order              0.6 ms
+  execute_tool lookup_order              0.5 ms
   chat gpt-4o-mini                       0.0 ms  tokens in/out 268/19  finish tool_calls
-  execute_tool refund_status             0.5 ms
+  execute_tool refund_status             0.4 ms
   chat gpt-4o-mini                       0.0 ms  tokens in/out 331/47  finish stop
 
-gen_ai.client.operation.duration         count 3  sum 0.000622764 s
-gen_ai.client.token.usage input          count 3  sum 781 {token}
-gen_ai.client.token.usage output         count 3  sum 87 {token}
+gen_ai.client.operation.duration             count 3  sum 0.000522814 s
+gen_ai.client.token.usage input              count 3  sum 781 {token}
+gen_ai.client.token.usage output             count 3  sum 87 {token}
 ```
 
-Set `OTEL_EXPORTER_OTLP_ENDPOINT` to also send it to a Collector. For a real model:
+Add `--stream` to stream the model responses; the spans and token counts come out the same,
+plus a `gen_ai.client.operation.time_to_first_chunk` histogram. Set
+`OTEL_EXPORTER_OTLP_ENDPOINT` to also send everything to a Collector. For a real model:
 
 ```bash
 pip install -e ".[azure,otlp]"
@@ -61,7 +63,8 @@ It also records the two GenAI client metrics, `gen_ai.client.token.usage` (split
 `gen_ai.token.type`) and `gen_ai.client.operation.duration`, with the bucket boundaries the
 conventions recommend. Spans answer "what happened in this run"; the metrics answer "what
 is this model costing per day" without anyone aggregating spans. Failed calls still record
-a duration, tagged with `error.type`, and no tokens.
+a duration, tagged with `error.type`, and no tokens. When streaming, time to first chunk is
+recorded too, which is the number users actually feel.
 
 Failures set the span status, `error.type` and an exception event. A failing tool doesn't
 fail the run: the error goes back to the model as the tool result, and the span keeps the
@@ -93,6 +96,12 @@ the tracing independent of LangChain's callback internals, which change often.
 chat and tool span ends up as its child in the same trace. There's a test for that, because
 it's the first thing to break if graph execution moves to another thread without context.
 
+**Streaming keeps the same trace shape.** The chat span covers the whole stream, and the
+chunks are merged back into one message before anything is recorded, so a streamed run and a
+non-streamed run produce the same spans and token counts. Usage arrives on the last chunk
+(`stream_usage=True` for Azure OpenAI), which is why it's read after the merge rather than
+per chunk.
+
 **Prompts never go in span names.** Span names are `chat {model}` and `execute_tool {tool}`.
 Names are indexed and shown everywhere, so they need to stay low-cardinality and free of user
 input.
@@ -101,10 +110,9 @@ input.
 
 `pytest` covers the span tree and parent links, the semconv attributes on each span type,
 content being off by default, scrubbing and tokenization when it's on, tool and model
-failures, token and duration metrics (including the error path), and the Azure model
-wiring (constructed without a network call).
+failures, token and duration metrics (including the error path), streaming (same trace, plus
+time to first chunk), and the Azure model wiring (constructed without a network call).
 
 ## Known gaps
 
-- Streaming responses aren't handled; the chat span covers a single non-streamed call.
 - The GenAI conventions are still marked experimental, so attribute names may move again.
