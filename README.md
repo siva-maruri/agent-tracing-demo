@@ -113,6 +113,9 @@ content being off by default, scrubbing and tokenization when it's on, tool and 
 failures, token and duration metrics (including the error path), streaming (same trace, plus
 time to first chunk), and the Azure model wiring (constructed without a network call).
 
-## Known gaps
+## Compatibility
 
-- The GenAI conventions are still marked experimental, so attribute names may move again.
+The GenAI semantic conventions are still experimental upstream and have renamed attributes
+before (`gen_ai.system` became `gen_ai.provider.name`). Every attribute and metric name here
+comes from the `opentelemetry-semantic-conventions` package, so a rename shows up as an import
+error in CI rather than as silently mislabelled telemetry. Built against 0.65b0.
