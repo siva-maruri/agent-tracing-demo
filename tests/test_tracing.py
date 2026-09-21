@@ -208,3 +208,46 @@ def test_failed_call_records_duration_with_error_type(monkeypatch):
     (duration,) = _points(reader, "gen_ai.client.operation.duration")
     assert duration.attributes["error.type"] == "RuntimeError"
     assert _points(reader, "gen_ai.client.token.usage") == []
+
+
+def test_streaming_gives_the_same_trace_plus_time_to_first_chunk(monkeypatch):
+    from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+
+    from agent_tracing import meter_provider
+
+    monkeypatch.setenv(CAPTURE_ENV, "false")
+    memory, reader = InMemorySpanExporter(), InMemoryMetricReader()
+    agent = build_agent(
+        demo_script(),
+        TOOLS,
+        tracer_provider=tracer_provider(memory, batch=False),
+        meter_provider=meter_provider(reader),
+        stream=True,
+    )
+    answer = agent(QUESTION)
+
+    assert answer.startswith("Order 1042 was charged twice for $59.90.")
+    names = sorted(s.name for s in memory.get_finished_spans())
+    assert names.count("chat gpt-4o-mini") == 3
+    assert "execute_tool lookup_order" in names and "execute_tool refund_status" in names
+
+    tokens = {p.attributes["gen_ai.token.type"]: p for p in _points(reader, "gen_ai.client.token.usage")}
+    assert tokens["input"].sum == 781 and tokens["output"].sum == 87
+    (ttfc,) = _points(reader, "gen_ai.client.operation.time_to_first_chunk")
+    assert ttfc.count == 3
+
+
+def test_non_streaming_records_no_time_to_first_chunk(monkeypatch):
+    from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+
+    from agent_tracing import meter_provider
+
+    monkeypatch.setenv(CAPTURE_ENV, "false")
+    reader = InMemoryMetricReader()
+    build_agent(
+        demo_script(),
+        TOOLS,
+        tracer_provider=tracer_provider(InMemorySpanExporter(), batch=False),
+        meter_provider=meter_provider(reader),
+    )(QUESTION)
+    assert _points(reader, "gen_ai.client.operation.time_to_first_chunk") == []
