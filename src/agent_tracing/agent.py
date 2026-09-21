@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import time
 import uuid
 from collections.abc import Callable, Sequence
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langgraph.graph import END, START, MessagesState, StateGraph
-from opentelemetry import trace
+from opentelemetry import metrics, trace
+from opentelemetry.metrics import MeterProvider
 from opentelemetry.semconv._incubating.attributes import gen_ai_attributes as G
 from opentelemetry.trace import TracerProvider
 
@@ -25,16 +27,38 @@ def build_agent(
     tools: Sequence,
     name: str = "support-agent",
     tracer_provider: TracerProvider | None = None,
+    meter_provider: MeterProvider | None = None,
 ) -> Callable[..., str]:
     tracer = (tracer_provider or trace.get_tracer_provider()).get_tracer("agent_tracing")
+    chat_metrics = genai.ChatMetrics(
+        (meter_provider or metrics.get_meter_provider()).get_meter("agent_tracing")
+    )
     by_name = {t.name: t for t in tools}
     usage = {"input": 0, "output": 0}
 
     def call_model(state: MessagesState) -> dict:
         messages = [SystemMessage(SYSTEM_PROMPT), *state["messages"]]
+        started = time.perf_counter()
         with genai.chat_span(tracer, model.model_name, model.provider_name, messages) as span:
-            reply = model.invoke(messages)
+            try:
+                reply = model.invoke(messages)
+            except Exception as exc:
+                chat_metrics.record(
+                    time.perf_counter() - started,
+                    model.provider_name,
+                    model.model_name,
+                    error_type=type(exc).__qualname__,
+                )
+                raise
             i, o = genai.record_response(span, model.model_name, reply)
+        chat_metrics.record(
+            time.perf_counter() - started,
+            model.provider_name,
+            model.model_name,
+            response_model=(reply.response_metadata or {}).get("model_name"),
+            input_tokens=i,
+            output_tokens=o,
+        )
         usage["input"] += i
         usage["output"] += o
         return {"messages": [reply]}

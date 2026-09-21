@@ -10,11 +10,12 @@ from __future__ import annotations
 import argparse
 import os
 
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from .agent import build_agent
 from .models import AzureOpenAIModel, demo_script
-from .telemetry import tracer_provider
+from .telemetry import meter_provider, tracer_provider
 from .tools import TOOLS
 
 QUESTION = "Customer says order 1042 was charged twice. What happened, and is a refund on the way?"
@@ -46,6 +47,18 @@ def print_tree(spans) -> None:
     walk(None, 0)
 
 
+def print_metrics(reader: InMemoryMetricReader) -> None:
+    data = reader.get_metrics_data()
+    print()
+    for rm in data.resource_metrics if data else []:
+        for sm in rm.scope_metrics:
+            for metric in sm.metrics:
+                for point in metric.data.data_points:
+                    kind = point.attributes.get("gen_ai.token.type", "")
+                    label = f"{metric.name} {kind}".strip()
+                    print(f"{label:<40} count {point.count}  sum {point.sum:g} {metric.unit}")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(prog="agent_tracing")
     p.add_argument("question", nargs="?", default=QUESTION)
@@ -53,19 +66,26 @@ def main() -> None:
     args = p.parse_args()
 
     memory = InMemorySpanExporter()
-    exporters = [memory]
+    metric_memory = InMemoryMetricReader()
+    exporters, readers = [memory], [metric_memory]
     if os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"):
+        from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+        from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 
         exporters.append(OTLPSpanExporter())
+        readers.append(PeriodicExportingMetricReader(OTLPMetricExporter()))
     provider = tracer_provider(*exporters, batch=False)
+    meters = meter_provider(*readers)
 
     model = AzureOpenAIModel(args.azure_deployment, TOOLS) if args.azure_deployment else demo_script()
-    answer = build_agent(model, TOOLS, tracer_provider=provider)(args.question)
+    answer = build_agent(model, TOOLS, tracer_provider=provider, meter_provider=meters)(args.question)
     provider.shutdown()
 
     print(answer, end="\n\n")
     print_tree(memory.get_finished_spans())
+    print_metrics(metric_memory)
+    meters.shutdown()
 
 
 if __name__ == "__main__":

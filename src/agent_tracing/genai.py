@@ -15,7 +15,9 @@ from contextlib import contextmanager
 from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
+from opentelemetry.metrics import Meter
 from opentelemetry.semconv._incubating.attributes import gen_ai_attributes as G
+from opentelemetry.semconv._incubating.metrics import gen_ai_metrics as M
 from opentelemetry.semconv.attributes.error_attributes import ERROR_TYPE
 from opentelemetry.trace import Span, SpanKind, Status, StatusCode, Tracer
 
@@ -137,3 +139,54 @@ def tool_span(tracer: Tracer, call: dict[str, Any]) -> Iterator[Span]:
 def record_tool_result(span: Span, result: Any) -> None:
     if capture_content():
         span.set_attribute(G.GEN_AI_TOOL_CALL_RESULT, json.dumps(result, default=str))
+
+
+# Bucket boundaries recommended by the GenAI semantic conventions.
+_TOKEN_BUCKETS = [1, 4, 16, 64, 256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304, 16777216, 67108864]
+_DURATION_BUCKETS = [0.01, 0.02, 0.04, 0.08, 0.16, 0.32, 0.64, 1.28, 2.56, 5.12, 10.24, 20.48, 40.96, 81.92]
+
+
+class ChatMetrics:
+    """gen_ai.client.token.usage and gen_ai.client.operation.duration.
+
+    Spans answer "what happened in this run"; these answer "what is this costing us per model"
+    without anyone having to aggregate spans.
+    """
+
+    def __init__(self, meter: Meter):
+        self._tokens = meter.create_histogram(
+            M.GEN_AI_CLIENT_TOKEN_USAGE,
+            unit="{token}",
+            description="Tokens used per model call",
+            explicit_bucket_boundaries_advisory=_TOKEN_BUCKETS,
+        )
+        self._duration = meter.create_histogram(
+            M.GEN_AI_CLIENT_OPERATION_DURATION,
+            unit="s",
+            description="Duration of model calls",
+            explicit_bucket_boundaries_advisory=_DURATION_BUCKETS,
+        )
+
+    def record(
+        self,
+        seconds: float,
+        provider: str,
+        request_model: str,
+        response_model: str | None = None,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        error_type: str | None = None,
+    ) -> None:
+        attrs: dict[str, str] = {
+            G.GEN_AI_OPERATION_NAME: G.GenAiOperationNameValues.CHAT.value,
+            G.GEN_AI_PROVIDER_NAME: provider,
+            G.GEN_AI_REQUEST_MODEL: request_model,
+        }
+        if response_model:
+            attrs[G.GEN_AI_RESPONSE_MODEL] = response_model
+        if error_type:
+            attrs[ERROR_TYPE] = error_type
+        self._duration.record(seconds, attrs)
+        if error_type is None:
+            for token_type, count in (("input", input_tokens), ("output", output_tokens)):
+                self._tokens.record(count, {**attrs, G.GEN_AI_TOKEN_TYPE: token_type})

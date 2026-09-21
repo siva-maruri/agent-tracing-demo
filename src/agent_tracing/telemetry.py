@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import MetricReader
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor, SpanExporter
@@ -29,3 +31,11 @@ def tracer_provider(
     for exporter in exporters:
         provider.add_span_processor(processor(ScrubbingSpanExporter(exporter, scrubber)))
     return provider
+
+
+def meter_provider(*readers: MetricReader, service_name: str = "support-agent") -> MeterProvider:
+    # Metrics carry model names and token counts only, never message content, so they
+    # don't go through the scrubber.
+    return MeterProvider(
+        metric_readers=list(readers), resource=Resource.create({"service.name": service_name})
+    )
