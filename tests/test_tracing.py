@@ -147,3 +147,64 @@ def test_azure_model_builds_without_network(monkeypatch):
     model = AzureOpenAIModel("gpt-4o-mini", TOOLS)
     assert model.provider_name == "azure.ai.openai"
     assert model.model_name == "gpt-4o-mini"
+
+
+def _points(reader, name):
+    data = reader.get_metrics_data()
+    return [
+        p
+        for rm in data.resource_metrics
+        for sm in rm.scope_metrics
+        for m in sm.metrics
+        if m.name == name
+        for p in m.data.data_points
+    ]
+
+
+def test_token_and_duration_metrics(monkeypatch):
+    from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+
+    from agent_tracing import meter_provider
+
+    monkeypatch.setenv(CAPTURE_ENV, "false")
+    reader = InMemoryMetricReader()
+    agent = build_agent(
+        demo_script(),
+        TOOLS,
+        tracer_provider=tracer_provider(InMemorySpanExporter(), batch=False),
+        meter_provider=meter_provider(reader),
+    )
+    agent(QUESTION)
+
+    tokens = {p.attributes["gen_ai.token.type"]: p for p in _points(reader, "gen_ai.client.token.usage")}
+    assert (tokens["input"].count, tokens["input"].sum) == (3, 781)
+    assert (tokens["output"].count, tokens["output"].sum) == (3, 87)
+    assert tokens["input"].attributes["gen_ai.request.model"] == "gpt-4o-mini"
+    assert tokens["input"].attributes["gen_ai.response.model"] == "gpt-4o-mini-2024-07-18"
+    # Semconv bucket advice is applied, not the SDK's default latency buckets.
+    assert tokens["input"].explicit_bounds[:3] == (1, 4, 16)
+
+    (duration,) = _points(reader, "gen_ai.client.operation.duration")
+    assert duration.count == 3
+    assert "error.type" not in duration.attributes
+
+
+def test_failed_call_records_duration_with_error_type(monkeypatch):
+    from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+
+    from agent_tracing import meter_provider
+
+    monkeypatch.setenv(CAPTURE_ENV, "false")
+    reader = InMemoryMetricReader()
+    agent = build_agent(
+        ScriptedModel([]),
+        TOOLS,
+        tracer_provider=tracer_provider(InMemorySpanExporter(), batch=False),
+        meter_provider=meter_provider(reader),
+    )
+    with pytest.raises(RuntimeError):
+        agent(QUESTION)
+
+    (duration,) = _points(reader, "gen_ai.client.operation.duration")
+    assert duration.attributes["error.type"] == "RuntimeError"
+    assert _points(reader, "gen_ai.client.token.usage") == []
