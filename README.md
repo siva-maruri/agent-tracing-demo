@@ -3,9 +3,9 @@
 A small LangGraph support agent traced with the OpenTelemetry
 [GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/), with prompts,
 completions and tool results scrubbed by
-[telemetry-scrubber](https://github.com/siva8537853-blip/telemetry-scrubber) before they leave
+[telemetry-scrubber](https://github.com/siva-maruri/telemetry-scrubber) before they leave
 the process. The traces can go straight into
-[otel-azure-pipeline](https://github.com/siva8537853-blip/otel-azure-pipeline).
+[otel-azure-pipeline](https://github.com/siva-maruri/otel-azure-pipeline).
 
 The agent answers "was this order double charged, and is a refund coming?" by calling two tools.
 The point isn't the agent. It's what an agent run looks like as a trace, and keeping customer

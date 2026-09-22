@@ -15,7 +15,7 @@ dependencies = [
     "langchain-core>=0.3",
     "opentelemetry-sdk>=1.37",
     "opentelemetry-semantic-conventions>=0.58b0",
-    "telemetry-scrubber @ git+https://github.com/siva8537853-blip/telemetry-scrubber",
+    "telemetry-scrubber @ git+https://github.com/siva-maruri/telemetry-scrubber",
 ]
 
 [project.optional-dependencies]
